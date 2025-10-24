@@ -8,8 +8,8 @@ on:
 
 jobs:
   build:
-    name: Build, Test, and Dockerize
-    runs-on: ubuntu-latest
+    name: Build, Test, Dockerize, and Deploy
+    runs-on: self-hosted
 
     steps:
       # 1️⃣ Checkout source code
@@ -23,7 +23,7 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      # 3️⃣ Cache Maven dependencies (speeds up future builds)
+      # 3️⃣ Cache Maven dependencies
       - name: Cache Maven packages
         uses: actions/cache@v4
         with:
@@ -35,42 +35,56 @@ jobs:
       - name: Build with Maven
         run: mvn clean package -DskipTests
 
+      # 5️⃣ Log in to DockerHub
       - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-           
-      # 5️⃣ Build Docker image
-      - name: Build Docker image
-        run: docker build -t springboot-tasklist .
-      - name: Tag and Push Docker image
+      # 6️⃣ Build and push Docker image
+      - name: Build and push Docker image
         run: |
+          docker build -t springboot-tasklist .
           docker tag springboot-tasklist ${{ secrets.DOCKERHUB_USERNAME }}/springboot-tasklist:latest
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/springboot-tasklist:latest
 
-
+      # 7️⃣ Set up kubectl
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: 'latest'
 
+      # 8️⃣ Configure kubeconfig
       - name: Configure Kubeconfig
         run: |
           mkdir -p $HOME/.kube
           echo "${{ secrets.KUBE_CONFIG }}" > $HOME/.kube/config
 
+      # 9️⃣ Deploy to Kubernetes
       - name: Deploy to Kubernetes
         run: |
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
 
-
-      # 6️⃣ (Optional) Run container for testing
-      - name: Run container
+      # 🔟 (Optional) Run container on self-hosted runner
+      - name: Run container locally for testing
         run: |
+          echo "🚀 Starting container on self-hosted runner..."
           docker run -d -p 8080:8080 --name springboot-tasklist springboot-tasklist
-          sleep 10
-          docker ps -a
+
+          echo "⏳ Waiting for app to start..."
+          sleep 15
+
+          echo "🔍 Checking running containers..."
+          docker ps
+
+          echo "📜 Logs:"
           docker logs springboot-tasklist
+
+          echo "✅ Testing endpoint..."
+          curl -f http://localhost:8080 || (echo "❌ App not responding" && exit 1)
+
+          echo "🧹 Cleaning up..."
+          docker stop springboot-tasklist
+          docker rm springboot-tasklist
